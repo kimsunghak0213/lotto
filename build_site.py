@@ -284,8 +284,8 @@ APP_HTML_T = """
       네이버지도에서 찾기 <span>주변 로또판매점 검색</span></a>
     <a class="lnk" href="https://dhlottery.co.kr/prchsplcsrch/home" target="_blank" rel="noopener">
       동행복권 판매점 찾기 <span>공식 판매점 조회</span></a>
-    <a class="lnk" id="shwin" href="https://search.naver.com/search.naver?query=%EB%A1%9C%EB%98%90+1%EB%93%B1+%EB%B0%B0%EC%B6%9C%EC%A0%90" target="_blank" rel="noopener">
-      1등 배출점 찾기 <span>네이버 검색 · 회차별 배출점</span></a>
+    <a class="lnk" id="shwin" href="https://search.naver.com/search.naver?ssc=tab.ait.all&query=%EB%A1%9C%EB%98%90%201%EB%93%B1%20%EB%B0%B0%EC%B6%9C%EC%A0%90" target="_blank" rel="noopener">
+      1등 배출점 보기 <span>네이버 AI 검색 · 목록 바로 표시</span></a>
   </div>
 </div>
 """
@@ -1011,7 +1011,8 @@ JS2 = r"""
 
   // ══ 판매점 링크 ═══════════════════════════════════════════
   // 최신 회차의 1등 배출점을 바로 찾을 수 있게 검색어에 회차를 넣는다.
-  $("shwin").href = "https://search.naver.com/search.naver?query=" +
+  // ssc=tab.ait.all 은 네이버 AI 탭이다. 배출점 목록이 표로 바로 나온다.
+  $("shwin").href = "https://search.naver.com/search.naver?ssc=tab.ait.all&query=" +
                     encodeURIComponent("로또 " + LAST + "회 1등 배출점");
 
   // 지역을 적으면 네이버지도 검색어에 붙인다. 비우면 현재 위치 기준으로 검색된다.
