@@ -30,6 +30,7 @@ jobs:
   build:
     name: 새 회차 반영 및 페이지 생성
     runs-on: ubuntu-latest
+    timeout-minutes: 10          # 기본값은 6시간. 멈췄을 때 오래 매달리지 않게 한다
     steps:
       - name: 저장소 내려받기
         uses: actions/checkout@v4
@@ -43,19 +44,15 @@ jobs:
       - name: 동행복권에서 새 회차 받아오기
         run: python update_draws.py
 
-      - name: 당첨 배출점 받아오기
-        run: python fetch_stores.py
-        continue-on-error: true      # 실패해도 배포는 계속한다
-
       - name: 새 회차를 저장소에 기록
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add draws.csv stores.json
+          git add draws.csv
           if git diff --staged --quiet; then
             echo "변경 없음 — 커밋 생략"
           else
-            git commit -m "회차·배출점 데이터 갱신"
+            git commit -m "회차 데이터 갱신"
             git push
           fi
 
@@ -74,6 +71,7 @@ jobs:
     name: 페이지 배포
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
