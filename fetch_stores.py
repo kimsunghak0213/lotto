@@ -22,6 +22,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from http.cookiejar import CookieJar
 from html.parser import HTMLParser
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -34,10 +35,14 @@ UA = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
       '(KHTML, like Gecko) Chrome/120.0 Safari/537.36')
 
 CANDIDATES = [
+    'https://www.dhlottery.co.kr/store.do?method=topStore&pageGubun=L645&drwNo={n}&nowPage=1',
     'https://www.dhlottery.co.kr/store.do?method=topStore&pageGubun=L645&drwNo={n}',
-    'https://dhlottery.co.kr/store.do?method=topStore&pageGubun=L645&drwNo={n}',
     'https://www.dhlottery.co.kr/wnprchsplcsrch/home?drwNo={n}',
+    'https://www.dhlottery.co.kr/wnprchsplcsrch/list?drwNo={n}',
 ]
+
+# 조회 페이지가 세션을 요구할 때를 대비해 먼저 들르는 곳
+WARMUP = 'https://www.dhlottery.co.kr/common.do?method=main'
 
 RANK_WORDS = ('자동', '수동', '반자동')
 
@@ -77,14 +82,22 @@ class Tables(HTMLParser):
             self.buf.append(data)
 
 
+# 조회 페이지가 세션을 요구하는 경우가 있어 쿠키를 들고 다닌다.
+_opener = urllib.request.build_opener(
+    urllib.request.HTTPCookieProcessor(CookieJar()))
+
+
 def get(url):
     req = urllib.request.Request(url, headers={
         'User-Agent': UA,
         'Referer': 'https://www.dhlottery.co.kr/',
         'Accept-Language': 'ko-KR,ko;q=0.9',
     })
-    with urllib.request.urlopen(req, timeout=TIMEOUT) as res:
+    with _opener.open(req, timeout=TIMEOUT) as res:
         raw = res.read()
+        final = res.geturl()
+    if final != url:
+        print(f'    (전달됨 → {final})')
     for enc in ('utf-8', 'euc-kr', 'cp949'):
         try:
             return raw.decode(enc)
@@ -132,11 +145,51 @@ def pick_stores(doc):
     return [merged[k] for k in order]
 
 
+def clean(doc):
+    """진단용으로 스크립트·스타일을 걷어낸다. 안 그러면 암호화 스크립트가 화면을 덮는다."""
+    d = re.sub(r'(?is)<script.*?</script>', ' ', doc)
+    d = re.sub(r'(?is)<style.*?</style>', ' ', d)
+    return d
+
+
+def diagnose(doc):
+    """표를 못 읽었을 때 무엇이 들어 있는지 알려준다."""
+    d = clean(doc)
+    text = re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', ' ', d)).strip()
+    print(f'    표를 찾지 못했습니다. 본문 앞부분: {text[:180]}')
+
+    for w in ('자동', '수동', '배출점', '당첨판매점', '조회', '로그인', '없습니다'):
+        c = d.count(w)
+        if c:
+            print(f'      "{w}" {c}회 등장')
+
+    p = Tables()
+    p.feed(d)
+    print(f'      표 {len(p.tables)}개')
+    for i, rows in enumerate(p.tables[:6]):
+        head = rows[0] if rows else []
+        print(f'        표{i + 1}: {len(rows)}행 · 첫 행 {[c[:14] for c in head[:6]]}')
+        if len(rows) > 1:
+            print(f'                       둘째 행 {[c[:14] for c in rows[1][:6]]}')
+
+    # 자동/수동 이 본문에 있으면 그 주변을 보여준다. 표가 아닌 목록일 수 있다.
+    m = re.search(r'(자동|수동)', text)
+    if m:
+        a = max(0, m.start() - 90)
+        print(f'      "자동/수동" 주변: …{text[a:m.start() + 110]}…')
+
+
 def main():
     with open(CSV_PATH, encoding='utf-8') as f:
         rounds = [int(r[0]) for r in list(csv.reader(f))[1:] if r]
     n = max(rounds)
     print(f'{n}회 배출점을 찾습니다')
+
+    try:
+        get(WARMUP)          # 세션 쿠키를 받아둔다
+        print('  메인 방문 완료 (세션 확보)')
+    except Exception as e:
+        print(f'  메인 방문 실패: {e} — 그대로 진행합니다')
 
     for url in CANDIDATES:
         u = url.format(n=n)
@@ -157,9 +210,7 @@ def main():
             for s in stores[:5]:
                 print(f'    · {s["name"]} ({s["type"]}) {s["addr"]}')
             return 0
-        # 화면은 받았지만 표를 못 읽은 경우, 원인 파악용으로 앞부분을 남긴다
-        head = re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', ' ', doc))[:200]
-        print(f'    표를 찾지 못했습니다. 화면 앞부분: {head}')
+        diagnose(doc)
 
     print('배출점을 가져오지 못했습니다 — 사이트는 검색 링크로 대신 동작합니다')
     if not os.path.exists(OUT_PATH):
