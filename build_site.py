@@ -224,7 +224,35 @@ button.draw:active{filter:brightness(.93)}
   border:1px dashed var(--line);border-radius:16px;margin-top:18px}
 """
 
-APP_HTML = """
+# ── 당첨 배출점 (fetch_stores.py 가 주간으로 받아둔 결과) ──
+# 파일이 없거나 비어 있으면 목록을 생략하고 검색 링크만 남긴다.
+STORES_HTML = ""
+try:
+    import json
+    _sp = os.path.join(HERE, 'stores.json')
+    if os.path.exists(_sp):
+        with open(_sp, encoding='utf-8') as _f:
+            _d = json.load(_f)
+        _st = _d.get('stores', [])
+        if _st:
+            _items = "".join(
+                '<li><div><b>{}</b>{}</div><span>{}</span></li>'.format(
+                    _s['name'],
+                    ' <em>{}</em>'.format(_s['type']) +
+                    (' <em class="dup">{}장</em>'.format(_s['count'])
+                     if _s.get('count', 1) > 1 else ''),
+                    _s['addr'])
+                for _s in _st)
+            STORES_HTML = (
+                '<div class="card">'
+                '<span class="lbl">{}회 1등 배출점 · {}곳</span>'
+                '<ul class="stores">{}</ul></div>'
+            ).format(_d.get('round', ''), len(_st), _items)
+            print('  1등 배출점 {}곳 수록'.format(len(_st)))
+except Exception as _e:
+    print('  배출점 목록 생략:', _e)
+
+APP_HTML_T = """
 <div class="app">
   <div class="opts">
     <label class="field">
@@ -245,6 +273,8 @@ APP_HTML = """
     <button id="save">텍스트로 저장</button>
   </div>
 
+  {STORES_HTML}
+
   <div class="card" style="margin-top:22px">
     <span class="lbl">판매점 찾기</span>
     <div class="inrow">
@@ -259,6 +289,8 @@ APP_HTML = """
   </div>
 </div>
 """
+
+APP_HTML = APP_HTML_T.replace("{STORES_HTML}", STORES_HTML)
 
 JS = r"""
 (function () {
@@ -559,6 +591,15 @@ input[type=range]{width:100%;accent-color:var(--bb);margin-top:13px;height:26px}
 .tax tr:last-child td:last-child{font-size:20px;font-weight:800;color:var(--n)}
 .tax .dim td{color:var(--dim);font-weight:400}
 .hint2{color:var(--dimmer);font-size:12.5px;margin-top:9px;line-height:1.6}
+ul.stores{list-style:none;margin:0;padding:0;max-height:330px;overflow-y:auto}
+ul.stores li{display:flex;justify-content:space-between;gap:11px;align-items:flex-start;
+  padding:11px 0;border-bottom:1px solid var(--line)}
+ul.stores li:last-child{border-bottom:0}
+ul.stores b{font-size:14.5px;font-weight:700}
+ul.stores em{font-style:normal;font-size:10.5px;font-weight:700;padding:2px 7px;
+  border-radius:999px;background:var(--panel2);color:var(--dim);margin-left:5px}
+ul.stores em.dup{background:#fbc400;color:#14181f}
+ul.stores span{font-size:12px;color:var(--dimmer);text-align:right;flex:0 0 44%}
 a.lnk{display:flex;align-items:center;justify-content:space-between;gap:10px;
   background:var(--panel2);border:1px solid var(--line);border-radius:12px;
   padding:14px 15px;margin-top:9px;text-decoration:none;color:var(--text);
