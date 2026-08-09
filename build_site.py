@@ -254,8 +254,8 @@ APP_HTML = """
       네이버지도에서 찾기 <span>주변 로또판매점 검색</span></a>
     <a class="lnk" href="https://dhlottery.co.kr/prchsplcsrch/home" target="_blank" rel="noopener">
       동행복권 판매점 찾기 <span>공식 판매점 조회</span></a>
-    <a class="lnk" href="https://dhlottery.co.kr/wnprchsplcsrch/home" target="_blank" rel="noopener">
-      당첨 판매점 조회 <span>동행복권 1·2등 배출점</span></a>
+    <a class="lnk" id="shwin" href="https://search.naver.com/search.naver?query=%EB%A1%9C%EB%98%90+1%EB%93%B1+%EB%B0%B0%EC%B6%9C%EC%A0%90" target="_blank" rel="noopener">
+      1등 배출점 찾기 <span>네이버 검색 · 회차별 배출점</span></a>
   </div>
 </div>
 """
@@ -969,6 +969,10 @@ JS2 = r"""
   });
 
   // ══ 판매점 링크 ═══════════════════════════════════════════
+  // 최신 회차의 1등 배출점을 바로 찾을 수 있게 검색어에 회차를 넣는다.
+  $("shwin").href = "https://search.naver.com/search.naver?query=" +
+                    encodeURIComponent("로또 " + LAST + "회 1등 배출점");
+
   // 지역을 적으면 네이버지도 검색어에 붙인다. 비우면 현재 위치 기준으로 검색된다.
   $("shloc").addEventListener("input", function () {
     var q = (this.value.trim() + " 로또판매점").trim();
