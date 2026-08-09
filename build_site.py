@@ -30,6 +30,7 @@ with open(SRC, encoding='utf-8') as f:
 rows.sort(key=lambda r: r[0])
 rounds = [r[0] for r in rows]
 draws = [tuple(r[1:7]) for r in rows]
+bonuses = [r[7] for r in rows]
 LAST = max(rounds)
 NEXT = LAST + 1          # 이번 주 추첨 대상 회차
 N = len(draws)
@@ -243,6 +244,19 @@ APP_HTML = """
     <button id="copy">번호 복사</button>
     <button id="save">텍스트로 저장</button>
   </div>
+
+  <div class="card" style="margin-top:22px">
+    <span class="lbl">판매점 찾기</span>
+    <div class="inrow">
+      <input id="shloc" placeholder="지역 입력 (예: 화성시 동탄)">
+    </div>
+    <a class="lnk" id="shnaver" href="https://map.naver.com/p/search/%EB%A1%9C%EB%98%90%ED%8C%90%EB%A7%A4%EC%A0%90" target="_blank" rel="noopener">
+      네이버지도에서 찾기 <span>주변 로또판매점 검색</span></a>
+    <a class="lnk" href="https://dhlottery.co.kr/prchsplcsrch/home" target="_blank" rel="noopener">
+      동행복권 판매점 찾기 <span>공식 판매점 조회</span></a>
+    <a class="lnk" id="shtop" href="#" target="_blank" rel="noopener">
+      1등 배출점 보기 <span>동행복권 당첨판매점</span></a>
+  </div>
 </div>
 """
 
@@ -251,8 +265,8 @@ JS = r"""
   // ── 회차 데이터: "회차:n1,n2,n3,n4,n5,n6" 을 ; 로 이어붙인 문자열
   var RAW = "__RAW__";
   var rows = RAW.split(";").map(function (t) {
-    var p = t.split(":");
-    return { round: +p[0], nums: p[1].split(",").map(Number) };
+    var p = t.split(":"), v = p[1].split(",").map(Number);
+    return { round: +p[0], nums: v.slice(0, 6), bonus: v[6] };
   });
   var LAST = rows[rows.length - 1].round, N = rows.length, NEXT = LAST + 1;
 
@@ -461,14 +475,515 @@ JS = r"""
     URL.revokeObjectURL(a.href);
   });
 
+  // 다른 패널이 같은 데이터를 다시 파싱하지 않도록 공유한다
+  window.LOTTO = { rows: rows, LAST: LAST, NEXT: NEXT, color: color, sum: sum };
+
   // 여기까지 오류 없이 왔을 때만 화면을 교체한다.
   document.documentElement.className += " js";
 })();
 """
 
-RAW_DATA = ";".join(f"{r}:" + ",".join(str(x) for x in d)
-                    for r, d in zip(rounds, draws))
+RAW_DATA = ";".join(f"{r}:" + ",".join(str(x) for x in d) + f",{b}"
+                    for r, d, b in zip(rounds, draws, bonuses))
 JS = JS.replace("__RAW__", RAW_DATA)
+
+
+# ══════════════════════════════════════════════════════════════
+# 확장 패널 (자바스크립트 전용)
+#   당첨확인 / 출현횟수 / 패턴분석표 / 수령액 계산
+#   스크립트가 없는 환경에서는 탭과 패널이 모두 숨겨지고
+#   기존 CSS 화면이 그대로 남는다.
+# ══════════════════════════════════════════════════════════════
+EXTRA_CSS2 = """
+.tabs{display:none;gap:6px;margin-top:22px;overflow-x:auto;-webkit-overflow-scrolling:touch;
+  padding-bottom:2px;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+html.js .tabs{display:flex}
+html.js details{display:none}
+.tabs button{flex:0 0 auto;background:var(--panel2);border:1.5px solid var(--line);
+  color:var(--dim);border-radius:11px;padding:11px 15px;cursor:pointer;
+  font-family:var(--kr);font-size:14.5px;font-weight:700;white-space:nowrap}
+.tabs button[aria-selected=true]{background:#22405c;border-color:var(--bb);color:#fff}
+.panel{display:none;margin-top:18px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:16px;
+  padding:17px;margin-bottom:10px}
+.card .lbl{margin-bottom:11px}
+button.act{width:100%;padding:15px;border:0;border-radius:12px;cursor:pointer;
+  font-family:var(--kr);font-size:16.5px;font-weight:800;color:#14181f;
+  background:linear-gradient(100deg,#fbc400,#ffd95e 50%,#fbc400);margin-top:11px}
+button.act:active{filter:brightness(.93)}
+button.sub{background:var(--panel2);border:1px solid var(--line);color:var(--dim);
+  border-radius:11px;padding:11px 14px;cursor:pointer;font-family:var(--kr);
+  font-size:14px;font-weight:600}
+button.sub[aria-pressed=true]{background:#22405c;border-color:var(--bb);color:#fff}
+.seg{display:flex;gap:6px;flex-wrap:wrap}
+.inrow{display:flex;gap:8px}
+.inrow input{background:var(--ink);border:1.5px solid var(--line);border-radius:10px;
+  color:var(--text);padding:12px;font-family:var(--kr);font-size:16px;width:100%}
+.inrow input:focus{outline:2px solid var(--bb);outline-offset:1px;border-color:transparent}
+.inrow input::placeholder{color:#4b586b}
+.inrow .w1{flex:0 0 90px}
+.msg{font-size:12.5px;color:#ffb3b3;margin-top:9px;display:none}
+.ok{color:#b0d840}
+video{width:100%;border-radius:12px;background:#000;margin-top:11px;display:block}
+
+.res{background:var(--panel);border:1px solid var(--line);border-radius:14px;
+  padding:14px;margin-bottom:8px}
+.res .hd{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.res .hd b{font-size:16px}
+.badge{font-size:12.5px;font-weight:800;padding:5px 11px;border-radius:999px;
+  background:var(--panel2);color:var(--dim)}
+.badge.win{background:#fbc400;color:#14181f}
+.badge.mid{background:#69c8f2;color:#14181f}
+.res .balls{gap:6px}
+.res .balls b{width:36px;height:36px;font-size:14.5px}
+.res .balls b.miss{opacity:.28}
+
+.frq{display:flex;flex-direction:column;gap:6px;margin-top:4px}
+.frq .ln{display:flex;align-items:center;gap:9px}
+.frq .ln>b{width:34px;height:34px;border-radius:50%;flex:none;display:flex;
+  align-items:center;justify-content:center;font-size:14px;font-weight:800;color:var(--bink)}
+.frq .bar{flex:1;height:9px;background:var(--panel2);border-radius:999px;overflow:hidden}
+.frq .bar i{display:block;height:100%;background:linear-gradient(90deg,#2f6c8f,#69c8f2);border-radius:999px}
+.frq .ct{width:38px;text-align:right;font-size:13px;color:var(--dim);font-weight:700}
+
+.pat{width:100%;height:auto;display:block;margin:0 auto}
+input[type=range]{width:100%;accent-color:var(--bb);margin-top:13px;height:26px}
+.rnd{text-align:center;font-size:19px;font-weight:800;margin-top:4px}
+.rnd span{font-size:13px;color:var(--dimmer);font-weight:600}
+
+.tax{width:100%;border-collapse:collapse;margin-top:13px}
+.tax td{padding:11px 2px;border-bottom:1px solid var(--line);font-size:14.5px}
+.tax td:last-child{text-align:right;font-weight:700}
+.tax tr:last-child td{border-bottom:0;padding-top:14px}
+.tax tr:last-child td:last-child{font-size:20px;font-weight:800;color:var(--n)}
+.tax .dim td{color:var(--dim);font-weight:400}
+.hint2{color:var(--dimmer);font-size:12.5px;margin-top:9px;line-height:1.6}
+a.lnk{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  background:var(--panel2);border:1px solid var(--line);border-radius:12px;
+  padding:14px 15px;margin-top:9px;text-decoration:none;color:var(--text);
+  font-size:15px;font-weight:700}
+a.lnk span{font-size:11.5px;font-weight:400;color:var(--dimmer);text-align:right}
+a.lnk::after{content:"↗";color:var(--dimmer);font-size:13px;margin-left:2px}
+a.lnk:active{filter:brightness(1.25)}
+"""
+
+TABS_HTML = """
+<div class="tabs" role="tablist">
+  <button data-t="gen" aria-selected="true">번호뽑기</button>
+  <button data-t="chk" aria-selected="false">당첨확인</button>
+  <button data-t="frq" aria-selected="false">출현횟수</button>
+  <button data-t="pat" aria-selected="false">패턴분석</button>
+  <button data-t="tax" aria-selected="false">수령액</button>
+</div>
+"""
+
+PANELS_HTML = """
+<div class="panel" id="pn-chk">
+  <div class="card">
+    <span class="lbl">QR코드로 확인</span>
+    <button class="act" id="qrgo">카메라로 QR 스캔</button>
+    <video id="qrvid" playsinline muted hidden></video>
+    <button class="sub" id="qrstop" hidden style="width:100%;margin-top:9px">중지</button>
+    <p class="msg" id="qrmsg"></p>
+    <p class="hint2">용지 아래쪽 QR을 화면 안에 맞춰주세요. 카메라 권한을 물어보면 허용해야 합니다.</p>
+  </div>
+  <div class="card">
+    <span class="lbl">번호 직접 입력</span>
+    <div class="inrow">
+      <input class="w1" id="ckr" inputmode="numeric" placeholder="회차">
+      <input id="ckn" inputmode="numeric" placeholder="번호 6개 (예: 3 11 24 31 38 44)">
+    </div>
+    <button class="act" id="ckgo">당첨 확인</button>
+    <p class="msg" id="ckmsg"></p>
+  </div>
+  <div id="ckout"></div>
+</div>
+
+<div class="panel" id="pn-frq">
+  <div class="card">
+    <span class="lbl">집계 구간</span>
+    <div class="seg" id="frqrange">
+      <button class="sub" data-n="3" aria-pressed="false">최근 3회</button>
+      <button class="sub" data-n="5" aria-pressed="false">최근 5회</button>
+      <button class="sub" data-n="10" aria-pressed="false">최근 10회</button>
+      <button class="sub" data-n="50" aria-pressed="false">최근 50회</button>
+      <button class="sub" data-n="0" aria-pressed="true">전체</button>
+    </div>
+    <div class="seg" style="margin-top:9px">
+      <button class="sub" id="frqbonus" aria-pressed="false">보너스 포함</button>
+      <button class="sub" id="frqsort" aria-pressed="false">출현횟수순</button>
+    </div>
+    <p class="hint2" id="frqinfo"></p>
+  </div>
+  <div class="frq" id="frqout"></div>
+</div>
+
+<div class="panel" id="pn-pat">
+  <div class="card">
+    <div class="rnd" id="patrnd"></div>
+    <input type="range" id="patsl" min="1" step="1">
+    <div class="seg" style="margin-top:9px;justify-content:center">
+      <button class="sub" id="patprev">◀ 이전</button>
+      <button class="sub" id="patlast">최신 회차</button>
+      <button class="sub" id="patnext">다음 ▶</button>
+    </div>
+  </div>
+  <div class="card"><div id="patbox"></div></div>
+  <p class="hint2">실제 로또 용지와 같은 배치(가로 7칸)입니다. 선은 번호를 작은 수부터 이은 것으로, 그 회차 번호가 용지에서 어떻게 퍼져 있었는지 보여줍니다.</p>
+</div>
+
+<div class="panel" id="pn-tax">
+  <div class="card">
+    <span class="lbl">당첨금액</span>
+    <div class="inrow"><input id="txin" inputmode="numeric" placeholder="예: 2000000000"></div>
+    <div class="seg" style="margin-top:9px">
+      <button class="sub" data-v="20000000000">200억</button>
+      <button class="sub" data-v="2000000000">20억</button>
+      <button class="sub" data-v="1000000000">10억</button>
+      <button class="sub" data-v="50000000">5천만</button>
+      <button class="sub" data-v="1500000">150만</button>
+    </div>
+    <table class="tax" id="txout"></table>
+  </div>
+  <p class="hint2">복권 당첨금은 기타소득입니다. 복권 구입금액 1,000원을 필요경비로 뺀 금액이 과세 대상이고, 그 금액이 200만원 이하면 세금이 없습니다. 3억원까지는 20%, 넘는 부분은 30%의 소득세가 붙고 지방소득세가 소득세의 10%만큼 더해집니다. 실제 지급액은 지급기관 처리에 따라 원 단위에서 조금 다를 수 있습니다.</p>
+</div>
+"""
+
+
+JS2 = r"""
+// ── 확장 패널 동작 ─────────────────────────────────────────────
+// 앞의 스크립트가 window.LOTTO 를 만들어 두었을 때만 켠다.
+// 여기서 오류가 나도 번호뽑기 화면은 그대로 살아 있어야 하므로 전체를 감싼다.
+(function () {
+  if (!window.LOTTO) return;
+  var L = window.LOTTO, rows = L.rows, LAST = L.LAST, color = L.color;
+  var byRound = {};
+  rows.forEach(function (r) { byRound[r.round] = r; });
+
+  function $(id) { return document.getElementById(id); }
+  function ball(n, cls) {
+    return '<b class="c' + color(n) + (cls ? " " + cls : "") + '">' + n + "</b>";
+  }
+  function comma(n) { return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ","); }
+
+  // ── 탭 전환 ────────────────────────────────────────────────
+  var tabs = document.querySelector(".tabs");
+  function show(t) {
+    [].forEach.call(tabs.querySelectorAll("button"), function (b) {
+      b.setAttribute("aria-selected", b.dataset.t === t);
+    });
+    var gen = t === "gen";
+    document.querySelector(".controls").style.display = gen ? "" : "none";
+    document.querySelector(".app").style.display = gen ? "" : "none";
+    ["chk", "frq", "pat", "tax"].forEach(function (k) {
+      $("pn-" + k).style.display = (t === k) ? "block" : "none";
+    });
+    if (t === "frq") drawFrq();
+    if (t === "pat") drawPat();
+    if (t === "tax") drawTax();
+  }
+  tabs.addEventListener("click", function (e) {
+    var b = e.target.closest("button[data-t]");
+    if (b) show(b.dataset.t);
+  });
+
+  // ══ 당첨확인 ══════════════════════════════════════════════
+  function rankOf(pick, r) {
+    var hit = 0, i;
+    for (i = 0; i < pick.length; i++) if (r.nums.indexOf(pick[i]) >= 0) hit++;
+    var hb = pick.indexOf(r.bonus) >= 0;
+    if (hit === 6) return { rk: 1, hit: hit, hb: false };
+    if (hit === 5 && hb) return { rk: 2, hit: hit, hb: true };
+    if (hit === 5) return { rk: 3, hit: hit, hb: false };
+    if (hit === 4) return { rk: 4, hit: hit, hb: false };
+    if (hit === 3) return { rk: 5, hit: hit, hb: false };
+    return { rk: 0, hit: hit, hb: hb };
+  }
+
+  function renderCheck(round, games) {
+    var r = byRound[round];
+    if (!r) {
+      $("ckout").innerHTML = '<div class="res">' + round +
+        "회 데이터가 없습니다. 아직 추첨하지 않았거나 회차를 잘못 입력하셨습니다.</div>";
+      return;
+    }
+    var html = '<div class="res"><div class="hd"><b>' + round + "회 당첨번호</b>" +
+      '<span class="badge">보너스 ' + r.bonus + "</span></div>" +
+      '<div class="balls">' + r.nums.map(function (n) { return ball(n); }).join("") +
+      "</div></div>";
+
+    games.forEach(function (g, i) {
+      var v = rankOf(g, r);
+      var label = v.rk ? v.rk + "등" : "낙첨";
+      var cls = v.rk === 0 ? "" : (v.rk <= 2 ? "win" : "mid");
+      html += '<div class="res"><div class="hd"><b>' + String.fromCharCode(65 + i) +
+        "  " + v.hit + "개 일치" + (v.hb && v.rk !== 2 ? " + 보너스" : "") + "</b>" +
+        '<span class="badge ' + cls + '">' + label + "</span></div>" +
+        '<div class="balls">' + g.map(function (n) {
+          var miss = r.nums.indexOf(n) < 0 && n !== r.bonus;
+          return ball(n, miss ? "miss" : "");
+        }).join("") + "</div></div>";
+    });
+    $("ckout").innerHTML = html;
+  }
+
+  function msg(id, text, good) {
+    var e = $(id);
+    e.textContent = text || "";
+    e.style.display = text ? "block" : "none";
+    e.className = "msg" + (good ? " ok" : "");
+  }
+
+  $("ckgo").addEventListener("click", function () {
+    var round = parseInt($("ckr").value, 10) || LAST;
+    var m = ($("ckn").value.match(/\d+/g) || []).map(Number)
+      .filter(function (n) { return n >= 1 && n <= 45; });
+    var uniq = [];
+    m.forEach(function (n) { if (uniq.indexOf(n) < 0) uniq.push(n); });
+    if (uniq.length !== 6) { msg("ckmsg", "1~45 사이 서로 다른 번호 6개를 입력해 주세요."); return; }
+    msg("ckmsg", "");
+    $("ckr").value = round;
+    renderCheck(round, [uniq.sort(function (a, b) { return a - b; })]);
+  });
+
+  // 로또 용지 QR 은 아래 형태다.
+  //   m.dhlottery.co.kr/qr.do?method=winQr&v=1195m060713162425m050912202126m...0000000645.net
+  // 회차와 게임을 나누는 구분자가 자료마다 다르고(m, q 등) 끝에 잡다한 값이 붙는다.
+  // 그래서 구분자를 특정하지 않고, 숫자 묶음만 뽑아 앞 12자리씩 읽는다.
+  // 값이 1~45 밖이거나 중복이면 그 묶음은 버린다.
+  function parseTicket(text) {
+    var m = String(text).match(/[?&]v=([^&#\s]+)/);
+    if (!m) return null;
+    var g = m[1].match(/\d+/g);
+    if (!g || g.length < 2) return null;
+    var round = parseInt(g[0], 10);
+    if (!round || round < 1 || round > 9999) return null;
+    var games = [], i, j;
+    for (i = 1; i < g.length; i++) {
+      if (g[i].length < 12) continue;
+      var arr = [], ok = true, seen = {};
+      for (j = 0; j < 12; j += 2) {
+        var n = parseInt(g[i].substr(j, 2), 10);
+        if (!(n >= 1 && n <= 45) || seen[n]) { ok = false; break; }
+        seen[n] = 1; arr.push(n);
+      }
+      if (ok) games.push(arr.sort(function (a, b) { return a - b; }));
+    }
+    return games.length ? { round: round, games: games } : null;
+  }
+
+  var stream = null, raf = null;
+  function stopCam() {
+    if (raf) { cancelAnimationFrame(raf); raf = null; }
+    if (stream) { stream.getTracks().forEach(function (t) { t.stop(); }); stream = null; }
+    $("qrvid").hidden = true; $("qrstop").hidden = true;
+    $("qrgo").textContent = "카메라로 QR 스캔";
+  }
+  $("qrstop").addEventListener("click", stopCam);
+
+  function loadLib(cb) {
+    if (window.jsQR) { cb(); return; }
+    var s = document.createElement("script");
+    s.src = "jsqr.min.js";
+    s.onload = cb;
+    s.onerror = function () { msg("qrmsg", "QR 인식 파일(jsqr.min.js)을 불러오지 못했습니다."); };
+    document.head.appendChild(s);
+  }
+
+  $("qrgo").addEventListener("click", function () {
+    if (stream) { stopCam(); return; }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      msg("qrmsg", "이 브라우저에서는 카메라를 쓸 수 없습니다. 아래에 번호를 직접 입력해 주세요.");
+      return;
+    }
+    msg("qrmsg", "카메라를 준비하고 있습니다...", true);
+    loadLib(function () {
+      navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
+        .then(function (st) {
+          stream = st;
+          var v = $("qrvid");
+          v.hidden = false; v.srcObject = st; v.setAttribute("playsinline", "");
+          $("qrstop").hidden = false;
+          $("qrgo").textContent = "스캔 중지";
+          msg("qrmsg", "QR을 화면 안에 맞춰주세요.", true);
+          return v.play();
+        })
+        .then(function () {
+          var v = $("qrvid"), cv = document.createElement("canvas"), cx = cv.getContext("2d");
+          (function scan() {
+            if (!stream) return;
+            if (v.readyState === v.HAVE_ENOUGH_DATA) {
+              cv.width = v.videoWidth; cv.height = v.videoHeight;
+              cx.drawImage(v, 0, 0, cv.width, cv.height);
+              var img = cx.getImageData(0, 0, cv.width, cv.height);
+              var code = window.jsQR(img.data, img.width, img.height,
+                                     { inversionAttempts: "dontInvert" });
+              if (code && code.data) {
+                var t = parseTicket(code.data);
+                stopCam();
+                if (t) {
+                  msg("qrmsg", t.round + "회 " + t.games.length + "게임을 읽었습니다.", true);
+                  show("chk");
+                  $("ckr").value = t.round;
+                  renderCheck(t.round, t.games);
+                } else {
+                  // 형식을 못 읽으면 원문을 보여준다. 이 문구를 알려주면 맞출 수 있다.
+                  msg("qrmsg", "번호를 읽지 못했습니다. 읽힌 내용: " + code.data);
+                }
+                return;
+              }
+            }
+            raf = requestAnimationFrame(scan);
+          })();
+        })
+        .catch(function (err) {
+          stopCam();
+          msg("qrmsg", "카메라를 열 수 없습니다 (" + (err && err.name) +
+                       "). 권한을 허용했는지 확인하거나 번호를 직접 입력해 주세요.");
+        });
+    });
+  });
+
+  // ══ 출현횟수 ══════════════════════════════════════════════
+  var frqN = 0, frqB = false, frqS = false;
+  function drawFrq() {
+    var use = frqN > 0 ? rows.slice(-frqN) : rows;
+    var cnt = [], n;
+    for (n = 0; n <= 45; n++) cnt[n] = 0;
+    use.forEach(function (r) {
+      r.nums.forEach(function (x) { cnt[x]++; });
+      if (frqB) cnt[r.bonus]++;
+    });
+    var list = [];
+    for (n = 1; n <= 45; n++) list.push([n, cnt[n]]);
+    if (frqS) list.sort(function (a, b) { return b[1] - a[1] || a[0] - b[0]; });
+    var mx = Math.max.apply(null, list.map(function (x) { return x[1]; })) || 1;
+    $("frqout").innerHTML = list.map(function (x) {
+      return '<div class="ln">' + ball(x[0]) +
+        '<div class="bar"><i style="width:' + (x[1] / mx * 100).toFixed(1) + '%"></i></div>' +
+        '<span class="ct">' + x[1] + "</span></div>";
+    }).join("");
+    var from = use[0].round, to = use[use.length - 1].round;
+    $("frqinfo").textContent = from + "회 ~ " + to + "회 · " + use.length + "회차 집계" +
+      (frqB ? " · 보너스 포함" : " · 본번호만");
+  }
+  $("frqrange").addEventListener("click", function (e) {
+    var b = e.target.closest("button[data-n]"); if (!b) return;
+    frqN = +b.dataset.n;
+    [].forEach.call(this.querySelectorAll("button"), function (x) {
+      x.setAttribute("aria-pressed", x === b);
+    });
+    drawFrq();
+  });
+  $("frqbonus").addEventListener("click", function () {
+    frqB = !frqB; this.setAttribute("aria-pressed", frqB); drawFrq();
+  });
+  $("frqsort").addEventListener("click", function () {
+    frqS = !frqS; this.setAttribute("aria-pressed", frqS); drawFrq();
+  });
+
+  // ══ 패턴분석표 ════════════════════════════════════════════
+  // 실제 용지 배치: 한 줄에 7칸, 43~45 는 마지막 줄에 3칸
+  var CW = 46, CH = 44, PADX = 6, PADY = 6;
+  function cell(n) {
+    var i = n - 1;
+    return { x: PADX + (i % 7) * CW + CW / 2, y: PADY + Math.floor(i / 7) * CH + CH / 2 };
+  }
+  function drawPat() {
+    var rd = +$("patsl").value, r = byRound[rd];
+    if (!r) return;
+    $("patrnd").innerHTML = rd + "회 <span>당첨번호</span>";
+    var W = PADX * 2 + CW * 7, H = PADY * 2 + CH * 7, n, c;
+
+    // 원 → 연결선 → 숫자 순으로 겹쳐 그린다. 순서가 바뀌면 숫자가 원에 가린다.
+    var marks = "", pts = [];
+    r.nums.forEach(function (x) {
+      var p = cell(x);
+      marks += '<circle cx="' + p.x + '" cy="' + p.y + '" r="16" fill="#fbc400"/>';
+      pts.push(p.x + "," + p.y);
+    });
+    var bc = cell(r.bonus);
+    marks += '<circle cx="' + bc.x + '" cy="' + bc.y + '" r="16" fill="none" ' +
+             'stroke="#b0d840" stroke-width="2" stroke-dasharray="3 3"/>';
+
+    var svg = '<svg class="pat" viewBox="0 0 ' + W + " " + H + '" xmlns="http://www.w3.org/2000/svg">' +
+      '<rect x="1" y="1" width="' + (W - 2) + '" height="' + (H - 2) +
+      '" rx="10" fill="#1d2431" stroke="#2a3342"/>' + marks +
+      '<polyline points="' + pts.join(" ") + '" fill="none" stroke="#b0d840" ' +
+      'stroke-width="2.5" stroke-linejoin="round" opacity=".85"/>';
+
+    for (n = 1; n <= 45; n++) {
+      c = cell(n);
+      var on = r.nums.indexOf(n) >= 0;
+      svg += '<text x="' + c.x + '" y="' + (c.y + 5) + '" text-anchor="middle" font-size="15" ' +
+             'font-weight="' + (on ? "800" : "500") + '" fill="' +
+             (on ? "#14181f" : (n === r.bonus ? "#b0d840" : "#6b788c")) + '">' + n + "</text>";
+    }
+    $("patbox").innerHTML = svg + "</svg>";
+  }
+
+  $("patsl").addEventListener("input", drawPat);
+  $("patprev").addEventListener("click", function () {
+    var s = $("patsl"); s.value = Math.max(1, +s.value - 1); drawPat();
+  });
+  $("patnext").addEventListener("click", function () {
+    var s = $("patsl"); s.value = Math.min(LAST, +s.value + 1); drawPat();
+  });
+  $("patlast").addEventListener("click", function () {
+    $("patsl").value = LAST; drawPat();
+  });
+
+  // ══ 수령액 계산 ═══════════════════════════════════════════
+  // 복권 당첨금은 기타소득. 구입금액 1,000원을 필요경비로 공제하고,
+  // 남은 금액이 200만원 이하면 과세최저한으로 비과세.
+  // 3억원 이하 20%, 초과분 30% + 지방소득세(소득세의 10%).
+  function taxOf(win) {
+    var base = Math.max(win - 1000, 0);
+    if (base <= 2000000) return { inc: 0, loc: 0, net: win, free: true };
+    var inc = base <= 300000000 ? base * 0.2
+                                : 300000000 * 0.2 + (base - 300000000) * 0.3;
+    inc = Math.floor(inc);
+    var loc = Math.floor(inc * 0.1);
+    return { inc: inc, loc: loc, net: win - inc - loc, free: false };
+  }
+  function drawTax() {
+    var win = parseInt(String($("txin").value).replace(/\D/g, ""), 10);
+    if (!win) { $("txout").innerHTML = '<tr class="dim"><td>금액을 입력하세요</td><td></td></tr>'; return; }
+    var t = taxOf(win);
+    var rate = win ? ((t.inc + t.loc) / win * 100).toFixed(1) : 0;
+    $("txout").innerHTML =
+      "<tr><td>당첨금</td><td>" + comma(win) + "원</td></tr>" +
+      '<tr class="dim"><td>과세대상 (구입금액 1,000원 공제)</td><td>' + comma(Math.max(win - 1000, 0)) + "원</td></tr>" +
+      (t.free
+        ? '<tr class="dim"><td>세금</td><td>비과세 (200만원 이하)</td></tr>'
+        : "<tr><td>기타소득세</td><td>" + comma(t.inc) + "원</td></tr>" +
+          "<tr><td>지방소득세</td><td>" + comma(t.loc) + "원</td></tr>" +
+          '<tr class="dim"><td>실효세율</td><td>' + rate + "%</td></tr>") +
+      "<tr><td>세후 수령액</td><td>" + comma(t.net) + "원</td></tr>";
+  }
+  $("txin").addEventListener("input", drawTax);
+  document.querySelector("#pn-tax .seg").addEventListener("click", function (e) {
+    var b = e.target.closest("button[data-v]"); if (!b) return;
+    $("txin").value = b.dataset.v; drawTax();
+  });
+
+  // ══ 판매점 링크 ═══════════════════════════════════════════
+  // 1등 배출점은 회차별 페이지가 있어 최신 회차로 연결한다.
+  $("shtop").href = "https://m.dhlottery.co.kr/store.do?method=topStore" +
+                    "&pageGubun=L645&drwNo=" + LAST;
+  // 지역을 적으면 네이버지도 검색어에 붙인다. 비우면 현재 위치 기준으로 검색된다.
+  $("shloc").addEventListener("input", function () {
+    var q = (this.value.trim() + " 로또판매점").trim();
+    $("shnaver").href = "https://map.naver.com/p/search/" + encodeURIComponent(q);
+  });
+
+  // ── 초기값 ────────────────────────────────────────────────
+  $("ckr").placeholder = LAST + "회";
+  $("patsl").max = LAST; $("patsl").value = LAST;
+  $("txin").value = 2000000000;
+})();
+"""
 
 # ────────────────────────── 조립 ──────────────────────────
 HTML = f'''<!DOCTYPE html>
@@ -524,6 +1039,7 @@ label.st::after{{
 }}
 {CSS_RULES}
 {EXTRA_CSS}
+{EXTRA_CSS2}
 #st-bal:checked~.controls label[for="st-bal"]::after,
 #st-hot:checked~.controls label[for="st-hot"]::after,
 #st-cold:checked~.controls label[for="st-cold"]::after,
@@ -620,6 +1136,7 @@ footer{{text-align:center;color:var(--dimmer);font-size:11.5px;margin-top:28px;l
   <p class="sub">역대 당첨번호의 실제 분포에서 뽑은 5조합을 보여줍니다. 지난 1등 조합은 모두 제외했습니다.</p>
 </header>
 
+{TABS_HTML}
 <div class="controls">
   <span class="lbl">뽑기 방식</span>
   <div class="strat">{strat_labels}</div>
@@ -633,6 +1150,7 @@ footer{{text-align:center;color:var(--dimmer);font-size:11.5px;margin-top:28px;l
   {''.join(pools)}
 </div>
 {APP_HTML}
+{PANELS_HTML}
 
 <details>
   <summary>역대 데이터 통계</summary>
@@ -665,11 +1183,22 @@ footer{{text-align:center;color:var(--dimmer);font-size:11.5px;margin-top:28px;l
 </footer>
 </div>
 <script>{JS}</script>
+<script>{JS2}</script>
 </body>
 </html>'''
 
 os.makedirs(os.path.dirname(OUT), exist_ok=True)
 open(OUT, 'w', encoding='utf-8').write(HTML)
+
+# QR 인식 라이브러리는 필요할 때만 따로 불러오므로 별도 파일로 둔다.
+# 없으면 QR 스캔만 동작하지 않고 나머지 기능은 그대로다.
+lib = os.path.join(HERE, 'jsqr.min.js')
+if os.path.exists(lib):
+    import shutil
+    shutil.copy(lib, os.path.join(os.path.dirname(OUT), 'jsqr.min.js'))
+    print('  jsqr.min.js 포함')
+else:
+    print('  jsqr.min.js 없음 — QR 스캔 기능은 비활성')
 print(f'생성 완료: {OUT}')
 print(f'  데이터 {N}회차 (1~{LAST}회) · 이번 대상 {NEXT}회')
 print(f'  전략 {len(STRATS)}종 × {GROUPS}회 × 5조합 = {GROUPS*5*len(STRATS):,}조합')
