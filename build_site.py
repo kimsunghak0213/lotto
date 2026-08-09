@@ -254,8 +254,8 @@ APP_HTML = """
       네이버지도에서 찾기 <span>주변 로또판매점 검색</span></a>
     <a class="lnk" href="https://dhlottery.co.kr/prchsplcsrch/home" target="_blank" rel="noopener">
       동행복권 판매점 찾기 <span>공식 판매점 조회</span></a>
-    <a class="lnk" href="https://www.dhlottery.co.kr/lt645/result" target="_blank" rel="noopener">
-      1등 배출점 보기 <span>동행복권 당첨결과 &gt; 당첨판매점 조회</span></a>
+    <a class="lnk" href="https://m.dhlottery.co.kr/wnprchsplcsrch/home" target="_blank" rel="noopener">
+      당첨 판매점 조회 <span>동행복권 1·2등 배출점</span></a>
   </div>
 </div>
 """
